@@ -118,54 +118,49 @@ function isBannedOrOnlyAdmin(userData, threadData, senderID, threadID, isGroup, 
 }
 
 
-const { MongoClient } = require("mongodb");
-const configPath = process.cwd() + "/config.json";
-const config = require(configPath);
+const requestPath = process.cwd() + "/request.json";
+let requestData = fs.existsSync(requestPath) ? require(requestPath) : {};
 
-const mongoClient = new MongoClient(config.Lockunlockdb, { useUnifiedTopology: true });
-let db;
-
-// MongoDB connection init
-(async () => {
-	try {
-		await mongoClient.connect();
-		db = mongoClient.db().collection("bot");
-		console.log("Connected to MongoDB for lock/unlock system");
-	} catch (e) {
-		console.error("MongoDB connection failed:", e);
-	}
-})();
+// Add real-time watching for request.json
+fs.watch(requestPath, (eventType, filename) => {
+    if (eventType === 'change') {
+        try {
+            // Clear require cache to ensure the file is re-read
+            delete require.cache[require.resolve(requestPath)];
+            requestData = require(requestPath);
+            console.log('request.json updated and reloaded.');
+        } catch (err) {
+            console.error('Error reloading request.json:', err);
+        }
+    }
+});
 
 async function checkGroupAccess(threadID, senderID, commandName, message, prefix, threadsData, usersData) {
-async function checkGroupAccess(threadID, senderID, commandName, message, prefix, threadsData, usersData) {
-	if (!db) return false;
-
-	let groupStatus = await db.findOne({ threadID });
-
-	if (!groupStatus) {
-		groupStatus = {
-			threadID,
+	if (!requestData[threadID]) {
+		requestData[threadID] = {
 			status: "locked",
 			expiresAt: null
 		};
-		await db.insertOne(groupStatus);
+		fs.writeFileSync(requestPath, JSON.stringify(requestData, null, 2));
 	}
 
-	// Auto-lock if expired
+	const groupStatus = requestData[threadID];
+
+	// auto-lock if time expired
 	if (groupStatus.status === "unlocked" && groupStatus.expiresAt && Date.now() > groupStatus.expiresAt) {
-		await db.updateOne({ threadID }, { $set: { status: "locked", expiresAt: null } });
 		groupStatus.status = "locked";
+		fs.writeFileSync(requestPath, JSON.stringify(requestData, null, 2));
 	}
 
 	if (groupStatus.status === "locked" && commandName !== "request") {
+		// Fetch thread and user data to get names
 		const threadData = await threadsData.get(threadID);
 		const userData = await usersData.get(senderID);
 
-		const groupName = threadData?.threadName || "Unknown Group";
-		const userName = userData?.name || "Unknown User";
+		const groupName = threadData ? threadData.threadName : "Unknown Group";
+		const userName = userData ? userData.name : "Unknown User";
 
-		await message.reply({
-			body: `🔐 Access Restricted in ${groupName}
+		message.reply(`🔐 Access Restricted in ${groupName}
 This group is currently locked to general users.
 
 📌 Only the command ${prefix}request is available.
@@ -173,13 +168,10 @@ This group is currently locked to general users.
 📝 To request access, simply type:
 ${prefix}request — An admin will be notified to review your request.
 
-🙏 Thank you for your patience!`,
-			attachment: await global.utils.getStreamFromURL("https://media1.giphy.com/media/v1.Y2lkPTZjMDliOTUybWl5ZHh0dW43YXNoYTZuN2E5a3E4ZGJrbGp4bGwxZ2wzbzcwczdkcCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/xUA7aLpbS0S3kr3s76/giphy.gif")
-		});
+🙏 Thank you for your patience!`);
 		
 		return true;
 	}
-
 	return false;
 }
 
