@@ -1,4 +1,8 @@
 const fs = require("fs-extra");
+const mongoose = require("mongoose");
+const config = global.GoatBot.config;
+mongoose.connect(config.Lockunlockdb, { useNewUrlParser: true, useUnifiedTopology: true });
+
 const nullAndUndefined = [undefined, null];
 
 function getType(obj) {
