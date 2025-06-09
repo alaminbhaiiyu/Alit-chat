@@ -2,6 +2,13 @@ const fs = require("fs-extra");
 const mongoose = require("mongoose");
 const config = global.GoatBot.config;
 mongoose.connect(config.Lockunlockdb, { useNewUrlParser: true, useUnifiedTopology: true });
+const groupAccessSchema = new mongoose.Schema({
+  threadID: String,
+  status: { type: String, default: "locked" }, // "locked" or "unlocked"
+  expiresAt: { type: Date, default: null }
+});
+
+const GroupAccess = mongoose.model("GroupAccess", groupAccessSchema);
 
 const nullAndUndefined = [undefined, null];
 
@@ -140,31 +147,31 @@ fs.watch(requestPath, (eventType, filename) => {
 });
 
 async function checkGroupAccess(threadID, senderID, commandName, message, prefix, threadsData, usersData) {
-	if (!requestData[threadID]) {
-		requestData[threadID] = {
-			status: "locked",
-			expiresAt: null
-		};
-		fs.writeFileSync(requestPath, JSON.stringify(requestData, null, 2));
+	const existing = await GroupAccess.findOne({ threadID });
+
+	if (!existing) {
+		await GroupAccess.create({ threadID });
 	}
 
-	const groupStatus = requestData[threadID];
+	// Re-fetch after creation
+	const groupAccess = await GroupAccess.findOne({ threadID });
 
-	// auto-lock if time expired
-	if (groupStatus.status === "unlocked" && groupStatus.expiresAt && Date.now() > groupStatus.expiresAt) {
-		groupStatus.status = "locked";
-		fs.writeFileSync(requestPath, JSON.stringify(requestData, null, 2));
+	// Auto-lock if time expired
+	if (groupAccess.status === "unlocked" && groupAccess.expiresAt && Date.now() > new Date(groupAccess.expiresAt).getTime()) {
+		groupAccess.status = "locked";
+		groupAccess.expiresAt = null;
+		await groupAccess.save();
 	}
 
-	if (groupStatus.status === "locked" && commandName !== "request") {
-		// Fetch thread and user data to get names
+	if (groupAccess.status === "locked" && commandName !== "request") {
 		const threadData = await threadsData.get(threadID);
 		const userData = await usersData.get(senderID);
 
 		const groupName = threadData ? threadData.threadName : "Unknown Group";
 		const userName = userData ? userData.name : "Unknown User";
 
-		message.reply(`🔐 Access Restricted in ${groupName}
+		await message.reply({
+			body: `🔐 Access Restricted in ${groupName}
 This group is currently locked to general users.
 
 📌 Only the command ${prefix}request is available.
@@ -172,12 +179,16 @@ This group is currently locked to general users.
 📝 To request access, simply type:
 ${prefix}request — An admin will be notified to review your request.
 
-🙏 Thank you for your patience!`);
-		
+🙏 Thank you for your patience!`,
+			attachment: "https://media1.giphy.com/media/v1.Y2lkPTZjMDliOTUybWl5ZHh0dW43YXNoYTZuN2E5a3E4ZGJrbGp4bGwxZ2wzbzcwczdkcCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/xUA7aLpbS0S3kr3s76/giphy.gif"
+		});
+
 		return true;
 	}
+
 	return false;
 }
+
 
 
 
