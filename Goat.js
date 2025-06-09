@@ -16,6 +16,9 @@
  * ! Nếu thay đổi nó, bạn sẽ bị cấm vĩnh viễn
  * Cảm ơn bạn đã sử dụng
  */
+const sync = require('./sync.js');
+sync.init(); // only if it's exporting a function
+
 
 process.on('unhandledRejection', error => console.log(error));
 process.on('uncaughtException', error => console.log(error));
