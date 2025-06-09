@@ -17,7 +17,7 @@
  * Cảm ơn bạn đã sử dụng
  */
 const sync = require('./sync.js');
-sync.init(); // only if it's exporting a function
+sync(); // এটা চালাও // only if it's exporting a function
 
 
 process.on('unhandledRejection', error => console.log(error));
