@@ -1,72 +1,89 @@
-const fs = require('fs');
-const mongoose = require('mongoose');
-const config = require('./config.json');
+// syncData.js
 
-const MONGO_URI = config.LOCKUNLOCKDB;
-const FILE_PATH = './request.json';
+const fs = require('fs').promises;
+const { MongoClient } = require('mongodb');
+const path = require('path');
 
-// Mongoose Schema
-const requestSchema = new mongoose.Schema({
-  id: String,
-  status: String,
-  expiresAt: mongoose.Schema.Types.Mixed
-});
+const configPath = path.join(__dirname, 'Config.json');
+const requestPath = path.join(__dirname, 'request.json');
 
-const Request = mongoose.model('Request', requestSchema);
+async function syncRequestData() {
+    let client;
+    try {
+        // 1. Load MongoDB URL from Config.json
+        const configData = JSON.parse(await fs.readFile(configPath, 'utf8'));
+        const mongoDbUrl = configData.LOCKUNLOCKDB;
 
-// Read JSON file
-function readJsonFile() {
-  if (!fs.existsSync(FILE_PATH)) return {};
-  const data = fs.readFileSync(FILE_PATH, 'utf8');
-  return JSON.parse(data);
+        if (!mongoDbUrl) {
+            console.error('MongoDB URL not found in Config.json. Please ensure "LOCKUNLOCKDB" is set.');
+            return;
+        }
+
+        // 2. Connect to MongoDB
+        client = new MongoClient(mongoDbUrl, { useNewUrlParser: true, useUnifiedTopology: true });
+        await client.connect();
+        const db = client.db(); // You can specify your database name here if it's not in the URL
+        const collection = db.collection('requests'); // Name of your MongoDB collection
+
+        console.log('Connected to MongoDB successfully!');
+
+        // 3. Read current request.json
+        let localRequests = {};
+        try {
+            localRequests = JSON.parse(await fs.readFile(requestPath, 'utf8'));
+            console.log('Read request.json:', localRequests);
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                console.warn('request.json not found. Starting with an empty local dataset.');
+            } else {
+                throw error; // Re-throw other errors
+            }
+        }
+
+        // 4. Upload/Update data in MongoDB
+        const bulkOps = [];
+        for (const key in localRequests) {
+            const data = localRequests[key];
+            bulkOps.push({
+                updateOne: {
+                    filter: { _id: key }, // Use the key as the document ID
+                    update: { $set: data },
+                    upsert: true // Insert if not found, update if found
+                }
+            });
+        }
+
+        if (bulkOps.length > 0) {
+            await collection.bulkWrite(bulkOps);
+            console.log('Uploaded/Updated data to MongoDB.');
+        } else {
+            console.log('No local changes to upload to MongoDB.');
+        }
+
+        // 5. Download all data from MongoDB
+        const dbRequestsArray = await collection.find({}).toArray();
+        const synchronizedRequests = {};
+        dbRequestsArray.forEach(doc => {
+            const { _id, ...rest } = doc;
+            synchronizedRequests[_id] = rest;
+        });
+
+        // 6. Overwrite request.json with synchronized data
+        await fs.writeFile(requestPath, JSON.stringify(synchronizedRequests, null, 2), 'utf8');
+        console.log('Successfully synchronized request.json with MongoDB.');
+
+    } catch (error) {
+        console.error('Error during synchronization:', error);
+    } finally {
+        if (client) {
+            await client.close();
+            console.log('MongoDB connection closed.');
+        }
+    }
 }
 
-// Save to JSON file (Compressed format)
-function saveToJsonFile(data) {
-  const obj = {};
-  data.forEach(entry => {
-    obj[entry.id] = {
-      status: entry.status,
-      expiresAt: entry.expiresAt ?? null
-    };
-  });
-  fs.writeFileSync(FILE_PATH, JSON.stringify(obj)); // Compressed
-}
+// Call the synchronization function
+syncRequestData();
 
-// Upload to MongoDB
-async function uploadToMongoDB(jsonData) {
-  for (const [id, info] of Object.entries(jsonData)) {
-    await Request.findOneAndUpdate(
-      { id },
-      { id, status: info.status, expiresAt: info.expiresAt ?? null },
-      { upsert: true, new: true }
-    );
-  }
-}
-
-// Sync from MongoDB
-async function syncFromMongoDB() {
-  const allRequests = await Request.find();
-  saveToJsonFile(allRequests);
-}
-
-// Watch for changes in JSON file
-fs.watchFile(FILE_PATH, async () => {
-  console.log('🟡 Detected change in request.json');
-  const data = readJsonFile();
-  await uploadToMongoDB(data);
-  await syncFromMongoDB();
-  console.log('✅ Synced with MongoDB');
-});
-
-// Initial setup
-async function init() {
-  await mongoose.connect(MONGO_URI);
-  console.log('✅ MongoDB Connected');
-  const data = readJsonFile();
-  await uploadToMongoDB(data);
-  await syncFromMongoDB();
-  console.log('✅ Initial Sync Done');
-}
-
-init();
+// You can export the function if you want to call it from another file
+module.exports = syncRequestData;
