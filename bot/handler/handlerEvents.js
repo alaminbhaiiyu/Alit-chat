@@ -1,15 +1,4 @@
 const fs = require("fs-extra");
-const mongoose = require("mongoose");
-const config = global.GoatBot.config;
-mongoose.connect(config.Lockunlockdb, { useNewUrlParser: true, useUnifiedTopology: true });
-const groupAccessSchema = new mongoose.Schema({
-  threadID: String,
-  status: { type: String, default: "locked" }, // "locked" or "unlocked"
-  expiresAt: { type: Date, default: null }
-});
-
-const GroupAccess = mongoose.model("GroupAccess", groupAccessSchema);
-
 const nullAndUndefined = [undefined, null];
 
 function getType(obj) {
@@ -129,46 +118,51 @@ function isBannedOrOnlyAdmin(userData, threadData, senderID, threadID, isGroup, 
 }
 
 
-const requestPath = process.cwd() + "/request.json";
-let requestData = fs.existsSync(requestPath) ? require(requestPath) : {};
+const { MongoClient } = require("mongodb");
+const configPath = process.cwd() + "/config.json";
+const config = require(configPath);
 
-// Add real-time watching for request.json
-fs.watch(requestPath, (eventType, filename) => {
-    if (eventType === 'change') {
-        try {
-            // Clear require cache to ensure the file is re-read
-            delete require.cache[require.resolve(requestPath)];
-            requestData = require(requestPath);
-            console.log('request.json updated and reloaded.');
-        } catch (err) {
-            console.error('Error reloading request.json:', err);
-        }
-    }
-});
+const mongoClient = new MongoClient(config.Lockunlockdb, { useUnifiedTopology: true });
+let db;
+
+// MongoDB connection init
+(async () => {
+	try {
+		await mongoClient.connect();
+		db = mongoClient.db().collection("bot");
+		console.log("Connected to MongoDB for lock/unlock system");
+	} catch (e) {
+		console.error("MongoDB connection failed:", e);
+	}
+})();
 
 async function checkGroupAccess(threadID, senderID, commandName, message, prefix, threadsData, usersData) {
-	const existing = await GroupAccess.findOne({ threadID });
+async function checkGroupAccess(threadID, senderID, commandName, message, prefix, threadsData, usersData) {
+	if (!db) return false;
 
-	if (!existing) {
-		await GroupAccess.create({ threadID });
+	let groupStatus = await db.findOne({ threadID });
+
+	if (!groupStatus) {
+		groupStatus = {
+			threadID,
+			status: "locked",
+			expiresAt: null
+		};
+		await db.insertOne(groupStatus);
 	}
 
-	// Re-fetch after creation
-	const groupAccess = await GroupAccess.findOne({ threadID });
-
-	// Auto-lock if time expired
-	if (groupAccess.status === "unlocked" && groupAccess.expiresAt && Date.now() > new Date(groupAccess.expiresAt).getTime()) {
-		groupAccess.status = "locked";
-		groupAccess.expiresAt = null;
-		await groupAccess.save();
+	// Auto-lock if expired
+	if (groupStatus.status === "unlocked" && groupStatus.expiresAt && Date.now() > groupStatus.expiresAt) {
+		await db.updateOne({ threadID }, { $set: { status: "locked", expiresAt: null } });
+		groupStatus.status = "locked";
 	}
 
-	if (groupAccess.status === "locked" && commandName !== "request") {
+	if (groupStatus.status === "locked" && commandName !== "request") {
 		const threadData = await threadsData.get(threadID);
 		const userData = await usersData.get(senderID);
 
-		const groupName = threadData ? threadData.threadName : "Unknown Group";
-		const userName = userData ? userData.name : "Unknown User";
+		const groupName = threadData?.threadName || "Unknown Group";
+		const userName = userData?.name || "Unknown User";
 
 		await message.reply({
 			body: `🔐 Access Restricted in ${groupName}
@@ -180,15 +174,14 @@ This group is currently locked to general users.
 ${prefix}request — An admin will be notified to review your request.
 
 🙏 Thank you for your patience!`,
-			attachment: "https://media1.giphy.com/media/v1.Y2lkPTZjMDliOTUybWl5ZHh0dW43YXNoYTZuN2E5a3E4ZGJrbGp4bGwxZ2wzbzcwczdkcCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/xUA7aLpbS0S3kr3s76/giphy.gif"
+			attachment: await global.utils.getStreamFromURL("https://media1.giphy.com/media/v1.Y2lkPTZjMDliOTUybWl5ZHh0dW43YXNoYTZuN2E5a3E4ZGJrbGp4bGwxZ2wzbzcwczdkcCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/xUA7aLpbS0S3kr3s76/giphy.gif")
 		});
-
+		
 		return true;
 	}
 
 	return false;
 }
-
 
 
 
