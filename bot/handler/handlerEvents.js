@@ -1,3 +1,12 @@
+
+
+const fs = require("fs-extra");
+const nullAndUndefined = [undefined, null];
+
+function getType(obj) {
+	return Object.prototype.toString.call(obj).slice(8, -1);
+}
+
 let textStyleData = {};
 let currentTextStyle = "default";
 
@@ -21,12 +30,6 @@ global.setTextStyle = function (name) {
   return false;
 };
 
-const fs = require("fs-extra");
-const nullAndUndefined = [undefined, null];
-
-function getType(obj) {
-	return Object.prototype.toString.call(obj).slice(8, -1);
-}
 
 function getRole(threadData, senderID) {
 	const adminBot = global.GoatBot.config.adminBot || [];
