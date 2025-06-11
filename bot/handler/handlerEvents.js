@@ -1,3 +1,26 @@
+let textStyleData = {};
+let currentTextStyle = "default";
+
+try {
+  textStyleData = JSON.parse(fs.readFileSync("/text.json", "utf-8"));
+} catch (e) {
+  console.error("❌ Failed to load text.json:", e);
+  textStyleData = { default: {} };
+}
+
+function stylize(text) {
+  const styleMap = textStyleData[currentTextStyle] || {};
+  return text.split("").map(c => styleMap[c.toLowerCase()] || c).join("");
+}
+global.stylize = stylize;
+global.setTextStyle = function (name) {
+  if (textStyleData[name]) {
+    currentTextStyle = name;
+    return true;
+  }
+  return false;
+};
+
 const fs = require("fs-extra");
 const nullAndUndefined = [undefined, null];
 
@@ -262,6 +285,11 @@ module.exports = function (api, threadModel, userModel, dashBoardModel, globalMo
 				return await message.reply(utils.getText({ lang: langCode, head: "handlerEvents" }, "commandSyntaxError", prefix, commandName));
 			};
 		}
+		const originalReply = message.reply.bind(message);
+message.reply = (msg, ...rest) => {
+  if (typeof msg === "string") msg = stylize(msg);
+  return originalReply(msg, ...rest);
+};
 
 		/*
 			+-----------------------------------------------+
