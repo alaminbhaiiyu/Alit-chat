@@ -7,13 +7,14 @@ function getType(obj) {
 	return Object.prototype.toString.call(obj).slice(8, -1);
 }
 
+
 let textStyleData = {};
 let currentTextStyle = "default";
 
 try {
-  textStyleData = JSON.parse(fs.readFileSync("/text.json", "utf-8"));
+  textStyleData = JSON.parse(fs.readFileSync(__dirname + "/textStyles.json", "utf-8"));
 } catch (e) {
-  console.error("❌ Failed to load text.json:", e);
+  console.error("❌ Failed to load textStyles.json:", e);
   textStyleData = { default: {} };
 }
 
@@ -21,6 +22,7 @@ function stylize(text) {
   const styleMap = textStyleData[currentTextStyle] || {};
   return text.split("").map(c => styleMap[c.toLowerCase()] || c).join("");
 }
+
 global.stylize = stylize;
 global.setTextStyle = function (name) {
   if (textStyleData[name]) {
